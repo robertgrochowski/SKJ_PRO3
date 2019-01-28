@@ -107,7 +107,7 @@ public class Transmitter {
             byte[] packet = data.getData().getBytes();
             DatagramPacket dataToSend = new DatagramPacket(packet, packet.length, destClient, data.getPort());
             socket.send(dataToSend);
-            Utils.log("Forwarding data to Recipient, data:["+data.getData()+"]");
+            Utils.log("[FORWARDING] data to Recipient on port["+data.getPort()+"] data:["+data.getData()+"]");
         }
 
         @Override
@@ -119,7 +119,7 @@ public class Transmitter {
 
                     if (packet.getAddress().equals(destClient)) //Only specified client
                     {
-                        Utils.log("Received BACK-message from Recipient - forwarding to Agent");
+                        Utils.log("[BACK-Message] from Recipient port "+packet.getPort()+" - forwarding to Agent");
                         agentCommunicator.forwardToAgent(new ForwardData(new String(packet.getData()), packet.getPort()));
                     }
                     else Utils.log("Ignoring message from unpermitted client: " + packet.getAddress().toString() + ":"+packet.getPort());
@@ -142,8 +142,6 @@ public class Transmitter {
 
     private AgentCommunicator agentCommunicator;
     private RecipientCommunicator recipientCommunicator;
-
-    private boolean forceShutdown = false;
 
     public static void main(String[] args) {
         if(args.length != 1) throw new IllegalArgumentException("First param must be TCP port");

@@ -1,8 +1,8 @@
 package skj.pro3.utils;
 
 public class ForwardData {
-    public String data;
-    public int port;
+    private String data;
+    private int port;
 
     public ForwardData(String data, int port) {
         this.data = data;

@@ -6,7 +6,6 @@ import skj.pro3.utils.Utils;
 import java.io.*;
 import java.net.*;
 import java.util.*;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -15,7 +14,7 @@ public class Agent {
     public class ClientCommunicator implements Runnable {
         DatagramSocket socket;
 
-        public ClientCommunicator(DatagramSocket socket) {
+        private ClientCommunicator(DatagramSocket socket) {
             this.socket = socket;
         }
 
@@ -29,7 +28,7 @@ public class Agent {
 
                     InetSocketAddress client = new InetSocketAddress(packet.getAddress(), packet.getPort());
 
-                    if(activeClients.get(socket) == null) //Przypisanie nowego klienta do socketa
+                    if(activeClients.get(socket) == null)
                     {
                         Utils.log("Associating client to socket "+client.getAddress()+":"+client.getPort());
                         activeClients.put(socket, client);
@@ -40,7 +39,7 @@ public class Agent {
                         continue;
                     }
 
-                    System.out.println("Received message: " + new String(packet.getData()));
+                    System.out.println("[RECEIVED] on port ["+(socket.getLocalPort()-1000)+"]: " + new String(packet.getData()));
                     forwardToTransmitter(new ForwardData(new String(packet.getData()), (socket.getLocalPort()-1000))); //forward on correct port
 
                 } catch (IOException e) {
@@ -120,7 +119,7 @@ public class Agent {
     private Map<DatagramSocket, InetSocketAddress> activeClients = new HashMap<>();
 
 
-    public Agent(InetSocketAddress transmitter, InetAddress recipient, List<Integer> udpPorts) throws IOException {
+    private Agent(InetSocketAddress transmitter, InetAddress recipient, List<Integer> udpPorts) throws IOException {
 
         Utils.log("Agent started, type 'exit' to shutdown");
 
@@ -160,7 +159,7 @@ public class Agent {
         }
     }
 
-    void shutdownTransmitter() {
+    private void shutdownTransmitter() {
         try {
             BufferedReader br = new BufferedReader(new InputStreamReader(transmitterSocket.getInputStream()));
             BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(transmitterSocket.getOutputStream()));
@@ -177,7 +176,7 @@ public class Agent {
         }
     }
 
-    void configureTransmitter() throws IOException {
+    private void configureTransmitter() throws IOException {
         BufferedReader br = new BufferedReader(new InputStreamReader(transmitterSocket.getInputStream()));
         BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(transmitterSocket.getOutputStream()));
 
@@ -197,7 +196,7 @@ public class Agent {
         System.exit(-1);
     }
 
-    void forwardToTransmitter(ForwardData data) throws IOException {
+    private void forwardToTransmitter(ForwardData data) throws IOException {
         BufferedReader br = new BufferedReader(new InputStreamReader(transmitterSocket.getInputStream()));
         BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(transmitterSocket.getOutputStream()));
         lockTransmitterListener = true;
@@ -206,15 +205,15 @@ public class Agent {
         String response = br.readLine();
         if (response.equals("OK")) {
             Utils.w(bw, data.getPort() + "");
-            br.readLine(); //todo
+            br.readLine();
             Utils.w(bw, data.getData());
-            br.readLine(); //todo
+            br.readLine();
         }
         lockTransmitterListener = false;
-        System.out.println("Forwarded message to Transmitter");
+        Utils.log("[FORWARD]: ["+data.getData().trim()+"] forwarded to Transmitter");
     }
 
-    void forwardToClient(ForwardData data) throws IOException {
+    private void forwardToClient(ForwardData data) throws IOException {
 
         int clientPort = data.getPort()+1000;
 
@@ -225,7 +224,7 @@ public class Agent {
                 byte[] packet = data.getData().getBytes();
                 DatagramPacket dataToSend = new DatagramPacket(packet, packet.length, e.getValue().getAddress(), e.getValue().getPort());
                 socket.send(dataToSend);
-                Utils.log("Back-Message forwarded to Client");
+                Utils.log("[BACK-MESSAGE] from Transmitter forwarded to Client on port ["+data.getPort()+"]");
                 return;
             }
         }

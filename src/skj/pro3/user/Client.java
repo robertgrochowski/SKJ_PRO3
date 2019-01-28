@@ -29,22 +29,19 @@ public class Client {
         System.out.println("Enter message to send:");
         System.out.print("> ");
 
-        while (true) {
+        while (!Thread.currentThread().isInterrupted()) {
             String msg = scanner.nextLine();
             user.sendMessage(msg);
         }
     }
 
-    int agentReceivePort; //+1000
-    int remoteSendPort; //+1000
-    InetAddress agentIp;
-    DatagramSocket socket;
+    private int agentReceivePort; //+1000
+    private InetAddress agentIp;
+    private DatagramSocket socket;
 
-    public Client(InetAddress address, int remoteListen, int remoteSend){
+    private Client(InetAddress address, int remoteListen, int remoteSend){
         this.agentReceivePort = remoteListen;
         this.agentIp = address;
-
-        this.remoteSendPort = remoteSend;
 
         try {
             socket = new DatagramSocket(remoteSend+1000); //have same listen port as remote send port
@@ -57,7 +54,7 @@ public class Client {
         receiveMessages();
     }
 
-    public void sendMessage(String message) {
+    private void sendMessage(String message) {
         byte[] msg = message.getBytes();
         DatagramPacket packet = new DatagramPacket(msg, msg.length, agentIp, (agentReceivePort+1000));
         try {
@@ -68,10 +65,10 @@ public class Client {
         }
     }
 
-    public void receiveMessages() {
+    private void receiveMessages() {
 
         new Thread(()-> {
-            while (true) {
+            while (!Thread.currentThread().isInterrupted()) {
                 try {
                     DatagramPacket packet = new DatagramPacket(new byte[1460], 1460);
                     socket.receive(packet);
