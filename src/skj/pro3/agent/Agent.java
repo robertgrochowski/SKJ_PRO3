@@ -5,9 +5,9 @@ import skj.pro3.utils.Utils;
 
 import java.io.*;
 import java.net.*;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class Agent {
@@ -21,16 +21,31 @@ public class Agent {
 
         @Override
         public void run() {
-            while (true) {
+            while (!Thread.currentThread().isInterrupted())
+            {
                 try {
                     DatagramPacket packet = new DatagramPacket(new byte[1460], 1460);
                     socket.receive(packet);
 
+                    InetSocketAddress client = new InetSocketAddress(packet.getAddress(), packet.getPort());
+
+                    if(activeClients.get(socket) == null) //Przypisanie nowego klienta do socketa
+                    {
+                        Utils.log("Associating client to socket "+client.getAddress()+":"+client.getPort());
+                        activeClients.put(socket, client);
+                    }
+                    else if(!activeClients.get(socket).equals(client))
+                    {
+                        Utils.log("Client tried to connect on busy socket..", true);
+                        continue;
+                    }
+
                     System.out.println("Received message: " + new String(packet.getData()));
-                    forwardToTransmitter(new ForwardData(new String(packet.getData()), socket.getLocalPort()));
+                    forwardToTransmitter(new ForwardData(new String(packet.getData()), (socket.getLocalPort()-1000))); //forward on correct port
 
                 } catch (IOException e) {
-                    e.printStackTrace();
+                    if (!e.getMessage().toLowerCase().equals("socket closed"))
+                        e.printStackTrace();
                 }
             }
         }
@@ -45,8 +60,7 @@ public class Agent {
                 BufferedReader br = new BufferedReader(new InputStreamReader(transmitterSocket.getInputStream()));
                 BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(transmitterSocket.getOutputStream()));
 
-                while (true) {
-
+                while (!Thread.currentThread().isInterrupted()) {
                     if(transmitterSocket.getInputStream().available() > 0 && !lockTransmitterListener) {
                         String msg = br.readLine();
                         if (msg.equals("FORWARD")) {
@@ -62,17 +76,18 @@ public class Agent {
                     }
                 }
             } catch (IOException e) {
-                e.printStackTrace();
+                if (!e.getMessage().toLowerCase().equals("socket is closed")) {
+                    e.printStackTrace();
+                }
             }
         }
     }
 
-
-    /* Parametry:
-        - Adres IP przekaznika
-        - Port TCP przekaznika
-        - Adres IP odbiorcy
-        - Conajmniej jeden port UDP na ktore nasluchuje dane od procesu
+    /* Parameters:
+        - Transmitter IP
+        - Transmitter PORT
+        - Recipient IP
+        - At least one UDP port to listen (associated with receiver udp listen ports)
      */
 
     public static void main(String[] args) throws IOException {
@@ -101,19 +116,17 @@ public class Agent {
     private boolean lockTransmitterListener = false;
     private Socket transmitterSocket;
     private InetAddress recipient;
-    private Executor executor;
-    private DatagramSocket[] udpSockets;
+
+    private Map<DatagramSocket, InetSocketAddress> activeClients = new HashMap<>();
 
 
     public Agent(InetSocketAddress transmitter, InetAddress recipient, List<Integer> udpPorts) throws IOException {
-        try {
-            Thread.sleep(6000);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
+
+        Utils.log("Agent started, type 'exit' to shutdown");
+
         this.recipient = recipient;
-        executor = Executors.newFixedThreadPool(udpPorts.size()+1);
-        udpSockets = new DatagramSocket[udpPorts.size()];
+        ExecutorService executor = Executors.newFixedThreadPool(udpPorts.size() + 1);
+        DatagramSocket[] udpSockets = new DatagramSocket[udpPorts.size()];
         transmitterSocket = new Socket(transmitter.getAddress(), transmitter.getPort());
 
         //Configure transmitter
@@ -121,13 +134,47 @@ public class Agent {
 
         //Open UDP ports and start listen
         for (int i = 0; i < udpPorts.size(); i++) {
-            udpSockets[i] = new DatagramSocket(udpPorts.get(i));
+            udpSockets[i] = new DatagramSocket((udpPorts.get(i)+1000));
             executor.execute(new ClientCommunicator(udpSockets[i]));
         }
 
         executor.execute(new TransmitterListener());
 
-        //TODO: scanner wait for stop
+        boolean running = true;
+        while(running)
+        {
+            Scanner scanner = new Scanner(System.in);
+            if (scanner.nextLine().equals("exit")) {
+                Utils.log("Shutting down transmitter...");
+                shutdownTransmitter();
+                Utils.log("Shutting down Agent...");
+                for (DatagramSocket socket : udpSockets)
+                    socket.close();
+
+                transmitterSocket.close();
+
+                executor.shutdownNow();
+                Utils.log("Shutting down Agent...OK");
+                running = false;
+            } else Utils.log("Invalid command, type 'exit' to shutdown");
+        }
+    }
+
+    void shutdownTransmitter() {
+        try {
+            BufferedReader br = new BufferedReader(new InputStreamReader(transmitterSocket.getInputStream()));
+            BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(transmitterSocket.getOutputStream()));
+
+            Utils.w(bw, "SHUTDOWN");
+
+            String response = br.readLine();
+
+            if (response.equals("OK")) {
+                Utils.log("Shutting down transmitter...OK");
+            } else Utils.log("Shutting down transmitter...ERROR");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     void configureTransmitter() throws IOException {
@@ -156,13 +203,6 @@ public class Agent {
         lockTransmitterListener = true;
 
         Utils.w(bw, "FORWARD");
-        System.out.println("waiting for response");
-        try {
-            Thread.sleep(1000);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-        System.out.println(transmitterSocket.getInputStream().available());
         String response = br.readLine();
         if (response.equals("OK")) {
             Utils.w(bw, data.getPort() + "");
@@ -176,16 +216,20 @@ public class Agent {
 
     void forwardToClient(ForwardData data) throws IOException {
 
-        for (DatagramSocket socket : udpSockets)
-        {
-            if (socket.getLocalPort() == data.getPort())
+        int clientPort = data.getPort()+1000;
+
+        for (Map.Entry<DatagramSocket, InetSocketAddress> e : activeClients.entrySet()) {
+            if(e.getValue().getPort() == clientPort)
             {
+                DatagramSocket socket = e.getKey();
                 byte[] packet = data.getData().getBytes();
-                //DatagramPacket dataToSend = new DatagramPacket(packet, packet.length, /*client*/, /*client port*/data.getPort());
-                //socket.send(dataToSend);
+                DatagramPacket dataToSend = new DatagramPacket(packet, packet.length, e.getValue().getAddress(), e.getValue().getPort());
+                socket.send(dataToSend);
+                Utils.log("Back-Message forwarded to Client");
                 return;
             }
         }
-        Utils.log("No specified port found..:"+data.getPort(), true);
+
+        Utils.log("Could not find client in activeClients MAP, client port:"+data.getPort(), true);
     }
 }

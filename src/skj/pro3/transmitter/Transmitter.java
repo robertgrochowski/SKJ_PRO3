@@ -17,59 +17,72 @@ public class Transmitter {
         public AgentCommunicator() {
             new Thread(this).start();
         }
-
         public void forwardToAgent(ForwardData data) {
             dataToForward.add(data);
         }
 
         @Override
         public void run() {
-            try
-            {
+            try {
                 BufferedReader br = new BufferedReader(new InputStreamReader(agentSocket.getInputStream()));
                 BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(agentSocket.getOutputStream()));
                 boolean waitingForData = false;
-                while (true) {
-
+                while (!Thread.currentThread().isInterrupted()) {
                     if (agentSocket.getInputStream().available() > 0) {
                         String message = br.readLine();
 
-                        //Forward to recepient
+                        //Forwarding data to Recipient
                         if (waitingForData) {
                             int port = Integer.parseInt(message);
-                            Utils.w(bw, "OK"); //TODO
+                            Utils.w(bw, "OK");
                             String msg = br.readLine();
                             recipientCommunicator.forwardToRecipient(new ForwardData(msg, port));
                             waitingForData = false;
-                            Utils.w(bw, "OK"); //TODO
-                        }
-                        else if (message.equals("SHUTDOWN")) {
-                            //todo: do shutdown
-                        } else if (message.equals("FORWARD"))
-                        {
-                            Utils.w(bw,"OK");
+                            Utils.w(bw, "OK");
+                        } else if (message.equals("SHUTDOWN")) {
+                            Utils.w(bw, "OK");
+                            shutdown();
+                            return;
+                        } else if (message.equals("FORWARD")) {
+                            Utils.w(bw, "OK");
                             waitingForData = true;
                         }
                     }
 
-                    //Forward to agent
+                    //Forwarding to Agent
                     if (dataToForward.size() > 0) {
-                        System.out.println("size > 0");
                         ForwardData data = dataToForward.poll();
+                        if (data == null) continue; //IDE problem
 
-                        Utils.w(bw,"FORWARD");
+                        Utils.w(bw, "FORWARD");
                         String response = br.readLine();
 
                         if (response.equals("OK")) {
-                            Utils.w(bw, data.getPort()+"");
+                            Utils.w(bw, data.getPort() + "");
                             response = br.readLine();
-
-                            Utils.w(bw, data.getData());
+                            if (response.equals("OK")) {
+                                Utils.w(bw, data.getData());
+                            } else Utils.log("Agent responded with error while forwarding message");
                         }
                     }
                 }
-            } catch (Exception e) {
-                System.out.println(e);
+            }
+            catch (Exception e) {
+                if (!e.getMessage().toLowerCase().equals("socket is closed")) {
+                    e.printStackTrace();
+                    Utils.log("An error occurred in AgentCommunicator, exiting");
+                    System.exit(-1);
+                }
+            }
+        }
+
+        void selfShutdown() {
+            try {
+                agentSocket.close();
+                Utils.log("Shutting down agentCommunicator...OK");
+            } catch (IOException e) {
+                Utils.log("Shutting down agentCommunicator...ERROR", true);
+                e.printStackTrace();
             }
         }
     }
@@ -83,6 +96,8 @@ public class Transmitter {
                 socket = new DatagramSocket();
             } catch (SocketException e) {
                 e.printStackTrace();
+                Utils.log("Couldn't open port, exiting", true);
+                System.exit(-1);
             }
 
             new Thread(this).start();
@@ -90,31 +105,34 @@ public class Transmitter {
 
         public void forwardToRecipient(ForwardData data) throws IOException {
             byte[] packet = data.getData().getBytes();
-            DatagramPacket dataToSend = new DatagramPacket(packet, packet.length, destClient, data.getPort()+1000);
+            DatagramPacket dataToSend = new DatagramPacket(packet, packet.length, destClient, data.getPort());
             socket.send(dataToSend);
-            System.out.println("Data sent on port: " + (data.getPort() + 1000));
+            Utils.log("Forwarding data to Recipient, data:["+data.getData()+"]");
         }
 
         @Override
         public void run() {
             try {
-                while (true) {
+                while (!Thread.currentThread().isInterrupted()) {
                     DatagramPacket packet = new DatagramPacket(new byte[1460], 1460);
                     socket.receive(packet);
 
                     if (packet.getAddress().equals(destClient)) //Only specified client
                     {
-                        System.out.println("I got message from Recipient: "+(packet.getPort()-1000));
-                        agentCommunicator.forwardToAgent(new ForwardData(new String(packet.getData()), packet.getPort()-1000));
-
+                        Utils.log("Received BACK-message from Recipient - forwarding to Agent");
+                        agentCommunicator.forwardToAgent(new ForwardData(new String(packet.getData()), packet.getPort()));
                     }
-
-                    else
-                        Utils.log("Ignoring message from unpermitted client " + packet.getAddress().toString());
+                    else Utils.log("Ignoring message from unpermitted client: " + packet.getAddress().toString() + ":"+packet.getPort());
                 }
             } catch (IOException e) {
-                e.printStackTrace();
+                if (!e.getMessage().toLowerCase().equals("socket closed"))
+                    e.printStackTrace();
             }
+        }
+
+        void selfShutdown() {
+            socket.close();
+            Utils.log("Shutting down recipientCommunicator...OK");
         }
     }
 
@@ -125,30 +143,34 @@ public class Transmitter {
     private AgentCommunicator agentCommunicator;
     private RecipientCommunicator recipientCommunicator;
 
+    private boolean forceShutdown = false;
+
     public static void main(String[] args) {
         if(args.length != 1) throw new IllegalArgumentException("First param must be TCP port");
 
         try {
             TCP_PORT = Integer.parseInt(args[0]);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid TCP port value");
+            System.err.println("Invalid TCP port value");
+            System.exit(-1);
         }
 
         Utils.log("Transmitter initialization");
-        Utils.log("TCP listen port: " + TCP_PORT);
+        Utils.log("TCP listening on port: " + TCP_PORT);
+        Utils.log("-----------");
 
         new Transmitter();
     }
 
     public Transmitter(){
         try {
-            beginTCP();
+            configureTransmitter();
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    private void beginTCP() throws IOException {
+    private void configureTransmitter() throws IOException {
         ServerSocket serverSocket = new ServerSocket(TCP_PORT);
         Utils.log("Waiting for TCP connection");
         agentSocket = serverSocket.accept();
@@ -176,6 +198,7 @@ public class Transmitter {
                 } catch (Exception e) {
                     Utils.w(bw, "ERROR");
                     Utils.log("Invalid configuration message, excepted IP got ["+msg+"]", true);
+                    Utils.log("waiting for correct configuration");
                 }
                 finally {
                     waitingForPort = false;
@@ -183,27 +206,16 @@ public class Transmitter {
             }
         }
 
-        Utils.log("Configuration DONE");
+        Utils.log("Configuration successful!");
+        Utils.log("=========================");
         agentCommunicator = new AgentCommunicator();
         recipientCommunicator = new RecipientCommunicator();
     }
 
-
-
-
     private void shutdown(){
-
+        Utils.log("Shutting down agentCommunicator...");
+        agentCommunicator.selfShutdown();
+        Utils.log("Shutting down recipientCommunicator...");
+        recipientCommunicator.selfShutdown();
     }
-
-    //Nasluch na TCP
-    //TCP konfiguracja:
-    /*
-    -odbiorca - port
-    -otwieranie losowego udp do kontaktu z odbiorca:
-        - po otrzymaiu przesyla je po tcp do agenta
-
-    potem tcp:
-    -komenda rozlaczenia - tryb oczekiwania standby
-    -rozkaz wyslania pakietu udp do odbiorcy
-     */
 }

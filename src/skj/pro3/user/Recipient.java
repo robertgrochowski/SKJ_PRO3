@@ -7,57 +7,58 @@ import java.util.Scanner;
 
 public class Recipient {
 
-    //Parameters: Agent UDP IP:PORT
+    //Parameters: [LISTEN PORT] [SENDING PORT]
     public static void main(String[] args) {
         System.out.println("Waiting for messages");
 
-        if(args.length != 1) throw new IllegalArgumentException();
+        if(args.length != 2) throw new IllegalArgumentException();
         try {
-            int myPort = Integer.parseInt(args[0])+1000;
-            new Recipient(myPort);
+            int myListenPort = Integer.parseInt(args[0]);
+            int mySendPort = Integer.parseInt(args[1]);
+            new Recipient(myListenPort, mySendPort);
         } catch (IllegalArgumentException e){
-            System.err.println("Invalid port value");
+            System.err.println("Invalid port(s) value(s)");
+            System.exit(-1);
         }
     }
 
-    DatagramSocket socket;
+    DatagramSocket sendSocket;
+    DatagramSocket listenSocket;
 
-    public Recipient(int myPort){
+    public Recipient(int myListenPort, int mySendPort){
         try {
-            socket = new DatagramSocket(myPort);
+            listenSocket = new DatagramSocket(myListenPort);
+            sendSocket = new DatagramSocket(mySendPort);
+            receiveMessages();
         } catch (SocketException e) {
             e.printStackTrace();
         }
-
-        receiveMessages();
     }
 
     public void sendMessage(String message, InetAddress ip, int port) {
         byte[] msg = message.getBytes();
         DatagramPacket packet = new DatagramPacket(msg, msg.length, ip, port);
         try {
-            socket.send(packet);
+            sendSocket.send(packet);
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
     public void receiveMessages() {
-
         new Thread(()-> {
             while (true) {
                 try {
                     DatagramPacket packet = new DatagramPacket(new byte[1460], 1460);
-                    socket.receive(packet);
+                    listenSocket.receive(packet);
                     String msg = new String(packet.getData());
                     System.out.println("[RECEIVED]: " + msg);
-                    System.out.println("Making echo on port: "+packet.getPort());
-                    sendMessage("echo: " + msg, packet.getAddress(), packet.getPort());
+                    System.out.println("[BACK-MESSAGE]: Sending back echo message");
+                    sendMessage("echo [" + msg.trim() + "] ", packet.getAddress(), packet.getPort());
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
             }}
         ).start();
     }
-
 }
